@@ -4,3 +4,6 @@
 /dbt_project/models/example
 /dbt_project/seeds/
 /dbt_project/snapshots
+.env
+.csv
+__pycache__

@@ -9,8 +9,8 @@ minute_to_minute = Schedule(
     clocks=[
         IntervalClock(
             interval=timedelta(minutes=1),
-            start_date=current_time,
-            end_date=current_time + timedelta(minutes=10),
+            start_date=current_time + timedelta(seconds=5),
+            end_date=current_time + timedelta(minutes=10, seconds=5),
         )
     ]
 )

@@ -1,0 +1,6 @@
+prefect==0.15.9
+pandas
+dotenv
+requests
+dbt-postgres
+psycopg2-binary

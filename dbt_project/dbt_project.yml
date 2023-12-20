@@ -1,8 +1,8 @@
-name: "dbt_project"
+name: "brt_data"
 version: "1.0.0"
 config-version: 2
 
-profile: "dbt_project"
+profile: "brt_data"
 
 model-paths: ["models"]
 analysis-paths: ["analyses"]
@@ -16,7 +16,5 @@ clean-targets:
   - "dbt_packages"
 
 models:
-  dbt_project:
-    # Config indicated by + and applies to all files under models/example/
-    brt_data:
-      +materialized: view
+  brt_data:
+    +materialized: table

@@ -1,46 +1,87 @@
-from prefect import task
+import os
 import pandas as pd
 import requests
-import traceback
 import datetime
 import psycopg2
-import os
-
+from typing import Any
+from prefect import task
+from psycopg2 import extras
+from pipelines.utils import log
 
 API_URL = 'https://dados.mobilidade.rio/gps/brt'
 CSV_PATH = 'data/brt_vehicles.csv'
 
 
 @task
-def get_data():
+def get_data() -> str:
+    """
+    Gets data from an API
+
+    Returns:
+        str: all the data from the API_URL
+    """
     response = requests.get(API_URL)
     data = response.json()
+
+    log('Dados extraídos!')
+
     return data['veiculos']
 
 
 @task
-def process_data(data):
-    df = pd.DataFrame.from_records(data)
-    df.replace({'': pd.NA, ' ': pd.NA}, inplace=True)
-    df['dataHora'] = df['dataHora'].apply(lambda h: datetime.datetime.fromtimestamp(h/1000))
+def process_data(data: Any) -> pd.DataFrame:
+    """
+    Converts JSON data to dataframe
 
-    return df
+    Args:
+        data: JSON data
+
+    Returns:
+        pd.DataFrame
+    """
+    df_brt = pd.DataFrame.from_records(data)
+    df_brt.replace({'': pd.NA, ' ': pd.NA}, inplace=True)
+    df_brt['dataHora'] = df_brt['dataHora'].apply(
+        lambda h: datetime.datetime.fromtimestamp(h/1000))
+
+    log('DataFrame criado.')
+
+    return df_brt
 
 
 @task
-def generate_csv(new_data): 
+def generate_csv(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """
+    Generates a .csv file without duplicates
+
+    Args:
+        dataframe: original dataframe
+
+    Returns:
+        pd.DataFrame: dataframe without duplicates
+    """
     try:
         df = pd.read_csv(CSV_PATH)
-        concat_df = pd.concat([df, new_data])
-        concat_df.drop_duplicates(inplace=True, keep=False)
+        concat_df = pd.concat([df, dataframe])
+        concat_df.drop_duplicates(inplace=True)
         concat_df.to_csv(CSV_PATH, index=False)
+        log('Dados salvos no arquivo CSV.')
         return concat_df
+
     except FileNotFoundError:
-        new_data.to_csv(CSV_PATH, index=False)
-        return new_data
+        dataframe.to_csv(CSV_PATH, index=False)
+        log('Arquivo CSV criado.')
+        return dataframe
+
 
 @task
 def store_data(df):
+    """
+    Loads data into a PostgreSQL table
+
+    Args:
+        df: BRT data 
+    """
     conn = psycopg2.connect(
         host=os.environ['POSTGRES_HOST'],
         port=os.environ['POSTGRES_PORT'],
@@ -49,56 +90,30 @@ def store_data(df):
         password=os.environ['POSTGRES_PASSWORD']
     )
 
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            """
-            CREATE TABLE brt_data_pgsql (
-                id SERIAL PRIMARY KEY,
-                codigo VARCHAR(20),
+    with conn.cursor() as cursor:
+        create_query = """
+            CREATE TABLE IF NOT EXISTS brt_data (
+                codigo VARCHAR PRIMARY KEY,
                 placa VARCHAR(10),
-                linha INTEGER,
-                latitude numeric,
-                longitude numeric,
+                linha VARCHAR,
+                latitude NUMERIC,
+                longitude NUMERIC,
                 dataHora TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                velocidade numeric,
-                id_migracao_trajeto VARCHAR(10),
+                velocidade NUMERIC,
+                id_migracao_trajeto VARCHAR,
                 sentido VARCHAR(10),
-                trajeto VARCHAR(100),
-                hodometro numeric,
+                trajeto VARCHAR,
+                hodometro NUMERIC,
                 direcao INTEGER
             )
             """
-        )
 
-        conn.commit()
+        cursor.execute(create_query)
 
-        cursor.execute(
-            """
-            ALTER TABLE brt_data_pgsql
-            ADD CONSTRAINT idx_unique
-            UNIQUE (codigo, placa, linha, latitude, longitude, dataHora, velocidade, id_migracao_trajeto, sentido, trajeto, hodometro, direcao)
-            """
-        )
-        
-        conn.commit()
-    
-    except:
-        pass
-
-    query = """
-        INSERT INTO brt_data_pgsql (codigo, placa, linha, latitude, longitude, dataHora, velocidade, id_migracao_trajeto, sentido, trajeto, hodometro, direcao)
-        VALUES (%(codigo)s, %(placa)s, %(linha)s, %(latitude)s, %(longitude)s, %(dataHora)s, %(velocidade)s, %(id_migracao_trajeto)s, %(sentido)s, %(trajeto)s, %(hodometro)s, %(direcao)s)
-        ON CONFLICT DO NOTHING
-        """
-
-    df = df.where(pd.notna(df), None)
-
-    for _, row in df.iterrows():
-        cursor.execute(query, row.to_dict())
-
+        insert_query = """INSERT INTO brt_data VALUES %s ON CONFLICT DO NOTHING"""
+        extras.execute_values(cursor, insert_query, df.values)
 
     conn.commit()
-    cursor.close()
     conn.close()
+
+    log('Dados carregados no PostgreSQL.')
